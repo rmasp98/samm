@@ -1,0 +1,171 @@
+version: "3.8"
+services:
+  ssl:
+    image: rmasp98/mail-ssl
+    volumes:
+      - ssl-etc-vol:/etc/letsencrypt:rw
+      - ssl-vol:/ssl:rw
+    environment:
+      - DO_TOKEN=${DO_TOKEN}
+      - SERVER_DOMAINS=${SERVER_DOMAINS}
+      - EMAIL=${CERTBOT_EMAIL}
+      - PRODUCTION=${PRODUCTION} 
+    networks:
+      mailserver-network:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  mariadb:
+    image: rmasp98/mail-mariadb
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mariadb-data-vol:/var/lib/mysql:rw
+    environment:
+      - DB_ROOT_PASS=${DB_ROOT_PASS}
+      - DB_POSTFIX_PASS=${DB_POSTFIX_PASS}
+      - DB_DOVECOT_PASS=${DB_DOVECOT_PASS}
+      - DB_ROUNDCUBE_PASS=${DB_ROUNDCUBE_PASS}
+      - POSTMASTER_PASS=${POSTMASTER_PASS}
+    networks:
+      mailserver-network:
+        aliases:
+          - mariadb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  postfix:
+    image: rmasp98/mail-postfix
+    hostname: ${SMTP_SERVER}
+    links:
+      - mariadb
+      - rspamd
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+    volumes:
+      - ssl-vol:/ssl:ro
+      - dovecot-lmtpd-sasl-vol:/dovecot:rw
+    environment:
+      - DB_PASS=${DB_POSTFIX_PASS}
+      - PRODUCTION=${PRODUCTION}
+    networks:
+      mailserver-network:
+        aliases:
+          - ${SMTP_SERVER}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  dovecot:
+    image: rmasp98/mail-dovecot
+    hostname: ${IMAP_SERVER}
+    links:
+      - mariadb
+    ports:
+      - "143:143"
+      - "993:993"
+      - "4190:4190"
+    volumes:
+      - ssl-vol:/ssl:ro
+      - dovecot-lmtpd-sasl-vol:/postfix:rw
+      - mail-vol:/var/mail:rw
+    environment:
+      - DB_PASS=${DB_DOVECOT_PASS}
+      - CONTROLLER_PASS=${CONTROLLER_PASS}
+      - POSTMASTER_PASS=${POSTMASTER_PASS}
+    networks:
+      mailserver-network:
+        aliases:
+          - ${IMAP_SERVER}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  rspamd:
+    image: rmasp98/mail-rspamd
+    links:
+      - mariadb
+    volumes:
+      - redis-vol:/var/lib/redis:rw
+    environment:
+      - DB_PASS=${DB_POSTFIX_PASS}
+      - CONTROLLER_PASS=${CONTROLLER_PASS}
+    networks:
+      mailserver-network:
+        aliases:
+          - rspamd
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  roundcube:
+    image: rmasp98/mail-roundcube
+    depends_on:
+      - mariadb
+    links:
+      - mariadb
+      - postfix
+      - dovecot
+    ports:
+      - "443:443"
+    volumes:
+      - ssl-vol:/ssl:ro
+    environment:
+      - DB_PASS=${DB_ROUNDCUBE_PASS}
+      - IMAP_SERVER=${IMAP_SERVER}
+      - SMTP_SERVER=${SMTP_SERVER}
+      - NAME=${ROUNDCUBE_WEBNAME}
+      - SKIN=${ROUNDCUBE_SKIN}
+      - PLUGINS=${ROUNDCUBE_PLUGINS}
+      - PRODUCTION=${PRODUCTION}
+    networks:
+      mailserver-network:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    restart: always
+
+  utils:
+    image: rmasp98/mail-utils
+    links:
+      - mariadb
+    environment:
+      - DB_PASS=${DB_ROOT_PASS}
+    networks:
+      mailserver-network:
+
+networks:
+  mailserver-network:
+    driver: bridge
+      #    enable_ipv6: true
+
+volumes:
+  mariadb-data-vol:
+  ssl-vol:
+  ssl-etc-vol:
+  dovecot-lmtpd-sasl-vol:
+  mail-vol:
+  dkim-socket-vol:
+  redis-vol:
+  roundcube-vol:
